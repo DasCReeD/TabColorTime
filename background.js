@@ -195,7 +195,7 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
     }
 }
 
-async function executeHeatMapUpdate() {
+async function executeHeatMapUpdate(force = false) {
   if (isScriptUpdatingGroups) return;
   isScriptUpdatingGroups = true;
   
@@ -218,14 +218,28 @@ async function executeHeatMapUpdate() {
 
     const windows = await chrome.windows.getAll();
     
+    const sessionStore = await chrome.storage.session.get(['windowFingerprints']);
+    const windowFingerprints = sessionStore.windowFingerprints || {};
+    
     // Process each window independently to prevent cross-window grouping errors
     for (const win of windows) {
       const windowTabs = await chrome.tabs.query({ windowId: win.id, pinned: false });
       if (windowTabs.length === 0) continue;
 
       const { chunks } = getTabChunks(windowTabs, tabOrder);
+      
+      // Build a deterministic fingerprint of the mathematical layout
+      const fingerprint = isHotOnLeft + "|" + chunks.map(c => c.slice().sort().join(',')).join('|');
+      
+      if (!force && windowFingerprints[win.id] === fingerprint) {
+          continue; // Grouping boundaries are unchanged. Skip UI APIs to completely prevent visual "bouncing".
+      }
+      windowFingerprints[win.id] = fingerprint;
+      
       await applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft);
     }
+    
+    await chrome.storage.session.set({ windowFingerprints });
   } catch (error) {
     console.error("Heat map processing failed", error);
   } finally {
@@ -240,6 +254,6 @@ async function executeHeatMapUpdate() {
 // Allow popup to manually trigger updates
 chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'forceUpdate') {
-        executeHeatMapUpdate();
+        executeHeatMapUpdate(true);
     }
 });
