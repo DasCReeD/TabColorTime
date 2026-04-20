@@ -201,9 +201,10 @@ async function executeHeatMapUpdate(force = false) {
   
   try {
     // Atomically fetch the state parameters to prevent overwriting bugs
-    const settings = await chrome.storage.local.get(['sortDirection', 'tabOrder']);
+    const settings = await chrome.storage.local.get(['sortDirection', 'tabOrder', 'windowFingerprints']);
     const isHotOnLeft = settings.sortDirection === 'left';
     let tabOrder = settings.tabOrder || [];
+    const windowFingerprints = settings.windowFingerprints || {};
     
     // Purge globally dead tabs from master list to prevent ghost IDs
     const allOpenTabs = await chrome.tabs.query({});
@@ -217,9 +218,6 @@ async function executeHeatMapUpdate(force = false) {
     }
 
     const windows = await chrome.windows.getAll();
-    
-    const sessionStore = await chrome.storage.session.get(['windowFingerprints']);
-    const windowFingerprints = sessionStore.windowFingerprints || {};
     
     // Process each window independently to prevent cross-window grouping errors
     for (const win of windows) {
@@ -239,7 +237,7 @@ async function executeHeatMapUpdate(force = false) {
       await applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft);
     }
     
-    await chrome.storage.session.set({ windowFingerprints });
+    await chrome.storage.local.set({ windowFingerprints });
   } catch (error) {
     console.error("Heat map processing failed", error);
   } finally {
