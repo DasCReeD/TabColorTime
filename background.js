@@ -52,6 +52,13 @@ async function scheduleUpdate(tabId) {
   const result = await chrome.storage.local.get(['tabOrder']);
   let currentOrder = result.tabOrder || [];
 
+  // If this tab is already the most recent, skip the write entirely.
+  // This prevents unnecessary storage churn and downstream UI recalculations
+  // when the user clicks within the same group repeatedly.
+  if (currentOrder.length > 0 && currentOrder[currentOrder.length - 1] === tabId) {
+    return;
+  }
+
   // Move the interacted tab to the back of the array (The "HOT" end)
   currentOrder = currentOrder.filter(id => id !== tabId);
   currentOrder.push(tabId);
@@ -164,12 +171,18 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
             const liveGroupTabs = await chrome.tabs.query({ windowId: win.id, groupId: targetGroupId });
             if (liveGroupTabs.length > 0) {
                 const currentPhysicalIndex = liveGroupTabs[0].index;
-                // Only physically rearrange the group if it is incorrectly placed.
-                if (currentPhysicalIndex !== nextExpectedIndex) {
+                const groupEnd = currentPhysicalIndex + liveGroupTabs.length;
+                // Only physically rearrange the group if it is outside of its expected slot.
+                // Using a range check prevents cascading moves when groups are already
+                // adjacent but offset by 1 due to Chrome's internal tab reflow.
+                const isInCorrectSlot = (currentPhysicalIndex >= nextExpectedIndex && 
+                                         currentPhysicalIndex <= nextExpectedIndex + liveGroupTabs.length);
+                if (!isInCorrectSlot) {
                     try {
                         await chrome.tabGroups.move(targetGroupId, { index: nextExpectedIndex });
                     } catch(e) { /* ignore moving edge case errors */ }
                 }
+                // Always advance the expected index by the group size regardless of whether we moved
                 nextExpectedIndex += liveGroupTabs.length;
             }
             
