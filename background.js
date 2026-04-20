@@ -1,4 +1,4 @@
-const HEAT_COLORS = ['grey', 'blue', 'cyan', 'green', 'yellow', 'orange', 'red'];
+const HEAT_COLORS = ['grey', 'pink', 'purple', 'blue', 'cyan', 'green', 'yellow', 'orange', 'red'];
 let updateTimeout = null;
 let isUpdatingAccordion = false;
 let isScriptUpdatingGroups = false;
@@ -72,21 +72,23 @@ function getTabChunks(windowTabs, tabOrder) {
     const missingIds = validIdsInWindow.filter(id => !currentWindowOrder.includes(id));
     currentWindowOrder = [...missingIds, ...currentWindowOrder];
     
-    const totalTabs = currentWindowOrder.length;
-    let chunks = [];
+    let colorChunks = Array(HEAT_COLORS.length).fill().map(() => []);
+    let remainingTabs = [...currentWindowOrder];
     
-    // The HOT group gets up to 10 tabs, specifically to keep more recent tabs visible
-    let hotChunkStart = Math.max(0, totalTabs - 10);
-    if (totalTabs > 0) {
-        chunks.unshift(currentWindowOrder.slice(hotChunkStart, totalTabs));
+    // Fill from hottest to coldest
+    for (let c = HEAT_COLORS.length - 1; c >= 0; c--) {
+        if (remainingTabs.length === 0) break;
+        
+        let takeCount = 5;
+        if (c === HEAT_COLORS.length - 1) takeCount = 10;
+        if (c === 0) takeCount = remainingTabs.length; // Sweep all remaining into grey
+        
+        let startIdx = Math.max(0, remainingTabs.length - takeCount);
+        colorChunks[c] = remainingTabs.slice(startIdx);
+        remainingTabs = remainingTabs.slice(0, startIdx);
     }
     
-    // Older tabs are grouped into smaller chunks of 5 to provide a richer color gradient
-    for (let i = hotChunkStart; i > 0; i -= 5) {
-      let start = Math.max(0, i - 5);
-      chunks.unshift(currentWindowOrder.slice(start, i));
-    }
-    return { chunks, currentWindowOrder };
+    return { chunks: colorChunks, currentWindowOrder };
 }
 
 async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft) {
@@ -110,10 +112,8 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
       // This ensures tabs don't randomly flip positions inside of a group.
       chunkIds.sort((a, b) => currentPhysicalOrder.indexOf(a) - currentPhysicalOrder.indexOf(b));
       
-      const chunkDistanceFromRight = chunks.length - 1 - chunkIndex;
-      const colorIndex = Math.max(0, HEAT_COLORS.length - 1 - chunkDistanceFromRight);
-      const isHotGroup = (chunkDistanceFromRight === 0);
-      const groupColor = HEAT_COLORS[colorIndex];
+      const isHotGroup = (chunkIndex === HEAT_COLORS.length - 1);
+      const groupColor = HEAT_COLORS[chunkIndex];
       const targetTitle = isHotGroup ? "HOT" : "";
       
       try {
