@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "TabLife: Heat Map",
+  "version": "1.0",
+  "description": "Organizes tabs visually by recency and audio using Chrome Tab Groups to create a heat map.",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
