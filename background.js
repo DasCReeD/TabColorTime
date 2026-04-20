@@ -99,8 +99,12 @@ function getTabChunks(windowTabs, tabOrder) {
 }
 
 async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft) {
+    // Inject counter for diagnostic tracking logic
+    let diagnosticApiCalls = 0;
+    
     // Find the first index available for unpinned tabs to anchor the stacking
     let nextExpectedIndex = windowTabs.filter(t => t.pinned).length;
+
     
     let usedGroupIds = new Set();
     const currentPhysicalOrder = windowTabs.map(t => t.id);
@@ -159,6 +163,7 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
         
         // Only physically recreate/assign the group if the membership changed
         if (needsGrouping) {
+          diagnosticApiCalls++;
           const groupArgs = { tabIds: chunkIds };
           if (targetGroupId !== null) groupArgs.groupId = targetGroupId;
           targetGroupId = await chrome.tabs.group(groupArgs);
@@ -178,6 +183,7 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
                 const isInCorrectSlot = (currentPhysicalIndex >= nextExpectedIndex && 
                                          currentPhysicalIndex <= nextExpectedIndex + liveGroupTabs.length);
                 if (!isInCorrectSlot) {
+                    diagnosticApiCalls++;
                     try {
                         await chrome.tabGroups.move(targetGroupId, { index: nextExpectedIndex });
                     } catch(e) { /* ignore moving edge case errors */ }
@@ -192,6 +198,7 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
                     currentGroupInfo.collapsed !== targetCollapsed || 
                     currentGroupInfo.title !== targetTitle) {
                     
+                    diagnosticApiCalls++;
                     await chrome.tabGroups.update(targetGroupId, { 
                       color: groupColor,
                       collapsed: targetCollapsed,
@@ -206,6 +213,8 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
         console.error(`Error creating/updating group for color ${groupColor}:`, e);
       }
     }
+    
+    return diagnosticApiCalls;
 }
 
 async function executeHeatMapUpdate(force = false) {
@@ -247,7 +256,9 @@ async function executeHeatMapUpdate(force = false) {
       }
       windowFingerprints[win.id] = fingerprint;
       
-      await applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft);
+      const apiCallsMade = await applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft);
+      // Optional logging for diagnostic use
+      if (apiCallsMade > 0) console.log(`Window ${win.id} required ${apiCallsMade} UI API calls to stabilize.`);
     }
     
     await chrome.storage.local.set({ windowFingerprints });
