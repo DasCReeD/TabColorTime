@@ -31,4 +31,4 @@ TabColorTime natively leverages Chrome's Tab Groups feature to dynamically group
 
 ## Under the Hood
 
-TabColorTime actively listens to tab focus shifting (`chrome.tabs.onActivated`), new tab spawns (`chrome.tabs.onCreated`), and audio playing (`chrome.tabs.onUpdated`). Tab metadata is efficiently stored and continuously retrieved from `chrome.storage.local` to securely persist the queue across browser sleeps and restarts safely.
+TabColorTime natively adheres to strict **Manifest V3 Architecture**. It actively listens to tab focus shifting (`chrome.tabs.onActivated`), new tab spawns (`chrome.tabs.onCreated`), and audio playing (`chrome.tabs.onUpdated`). Tab metadata and lock states are sequentially stored and atomically retrieved from `chrome.storage.local` and `chrome.storage.session` to ensure tab history perfectly persists through aggressive service worker suspensions and browser restarts.
