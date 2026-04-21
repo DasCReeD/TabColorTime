@@ -52,14 +52,10 @@ async function scheduleUpdate(tabId) {
   const result = await chrome.storage.local.get(['tabOrder']);
   let currentOrder = result.tabOrder || [];
 
-  // Short-circuit: if the user clicks a tab that is ALREADY within the "HOT" chunk
-  // (the last 10 elements of the master array), we do NOT need to reshuffle tabOrder.
-  // This prevents the mathematical cache system from even needing to spin up, neutralizing 
-  // any visual extension bouncing outright in practice.
-  const isAlreadyHot = currentOrder.slice(-10).includes(tabId);
-  if (isAlreadyHot) {
-    // We only update tabOrder to strictly track the active tab precisely if it crosses a boundary.
-    // If it stays within the hot bucket, its relative internal sorting doesn't matter visually!
+  // If this tab is already the most recent, skip the write entirely.
+  // This prevents unnecessary storage churn and downstream UI recalculations
+  // when the user clicks within the same group repeatedly.
+  if (currentOrder.length > 0 && currentOrder[currentOrder.length - 1] === tabId) {
     return;
   }
 
@@ -106,10 +102,15 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
     // Inject counter for diagnostic tracking logic
     let diagnosticApiCalls = 0;
     
-    // Find the first index available for unpinned tabs to anchor the stacking
-    let nextExpectedIndex = windowTabs.filter(t => t.pinned).length;
+    // Pre-calculate expected indices to normalize iteration and avoid Chromium Flexbox tearing
+    let expectedIndices = {};
+    let cursor = windowTabs.filter(t => t.pinned).length;
+    for (let i = 0; i < chunks.length; i++) {
+        let chunkIndex = isHotOnLeft ? (chunks.length - 1 - i) : i;
+        expectedIndices[chunkIndex] = cursor;
+        cursor += chunks[chunkIndex].length;
+    }
 
-    
     let usedGroupIds = new Set();
     const currentPhysicalOrder = windowTabs.map(t => t.id);
     
@@ -117,9 +118,10 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
     const sessionSettings = await chrome.storage.session.get(['lastExpandedGroupId']);
     const lastExpandedGroupId = sessionSettings.lastExpandedGroupId || null;
 
-    for (let i = 0; i < chunks.length; i++) {
-      let chunkIndex = isHotOnLeft ? (chunks.length - 1 - i) : i;
+    // ALWAYS process from coldest to hottest organically to prevent native ungrouping conflicts
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       let chunkIds = chunks[chunkIndex];
+      let nextExpectedIndex = expectedIndices[chunkIndex];
       
       if (chunkIds.length === 0) continue;
       
@@ -192,8 +194,6 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
                         await chrome.tabGroups.move(targetGroupId, { index: nextExpectedIndex });
                     } catch(e) { /* ignore moving edge case errors */ }
                 }
-                // Always advance the expected index by the group size regardless of whether we moved
-                nextExpectedIndex += liveGroupTabs.length;
             }
             
             try {
