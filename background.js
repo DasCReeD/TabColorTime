@@ -99,34 +99,40 @@ function getTabChunks(windowTabs, tabOrder) {
 }
 
 async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft) {
-    // Inject counter for diagnostic tracking logic
     let diagnosticApiCalls = 0;
-    
-    // Pre-calculate expected indices to normalize iteration and avoid Chromium Flexbox tearing
-    let expectedIndices = {};
-    let cursor = windowTabs.filter(t => t.pinned).length;
+    const currentPhysicalOrder = windowTabs.map(t => t.id);
+
+    // 1. Calculate the ideal perfect visual sequence of tabs
+    // This allows us to strictly evaluate physical DOM layout integrity before mutating anything via Chrome APIs.
+    let idealChunkSequence = [];
+    let orderedChunksIndices = [];
     for (let i = 0; i < chunks.length; i++) {
         let chunkIndex = isHotOnLeft ? (chunks.length - 1 - i) : i;
-        expectedIndices[chunkIndex] = cursor;
-        cursor += chunks[chunkIndex].length;
+        orderedChunksIndices.push(chunkIndex);
+        
+        let chunkIds = chunks[chunkIndex];
+        if (chunkIds.length > 0) {
+            // Internal sorting to preserve native layout within the chunk bucket constraint
+            let sortedChunk = chunkIds.slice().sort((a,b) => currentPhysicalOrder.indexOf(a) - currentPhysicalOrder.indexOf(b));
+            idealChunkSequence.push(...sortedChunk);
+        }
     }
-
-    let usedGroupIds = new Set();
-    const currentPhysicalOrder = windowTabs.map(t => t.id);
     
-    // Retrieve the active expanded group from session storage, if any
+    // 2. Validate current visual sequence against ideal
+    const currentTrackedPhysicalOrder = currentPhysicalOrder.filter(id => idealChunkSequence.includes(id));
+    const isPerfectlyOrdered = idealChunkSequence.every((val, index) => val === currentTrackedPhysicalOrder[index]);
+
     const sessionSettings = await chrome.storage.session.get(['lastExpandedGroupId']);
     const lastExpandedGroupId = sessionSettings.lastExpandedGroupId || null;
+    let usedGroupIds = new Set();
+    
+    let nextExpectedIndex = windowTabs.filter(t => t.pinned).length;
 
-    // ALWAYS process from coldest to hottest organically to prevent native ungrouping conflicts
-    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+    // 3. Process the groups structurally
+    for (let chunkIndex of orderedChunksIndices) {
       let chunkIds = chunks[chunkIndex];
-      let nextExpectedIndex = expectedIndices[chunkIndex];
-      
       if (chunkIds.length === 0) continue;
       
-      // Sort the internal tabs in the chunk based on their pre-existing physical position
-      // This ensures tabs don't randomly flip positions inside of a group.
       chunkIds.sort((a, b) => currentPhysicalOrder.indexOf(a) - currentPhysicalOrder.indexOf(b));
       
       const isHotGroup = (chunkIndex === HEAT_COLORS.length - 1);
@@ -167,7 +173,6 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
             }
         }
         
-        // Only physically recreate/assign the group if the membership changed
         if (needsGrouping) {
           diagnosticApiCalls++;
           const groupArgs = { tabIds: chunkIds };
@@ -175,26 +180,17 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
           targetGroupId = await chrome.tabs.group(groupArgs);
         }
         
-        // It should be collapsed UNLESS it is the HOT group OR the last physical group the user explicitly expanded
         const targetCollapsed = !(isHotGroup || targetGroupId === lastExpandedGroupId);
         
         if (targetGroupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
-            const liveGroupTabs = await chrome.tabs.query({ windowId: win.id, groupId: targetGroupId });
-            if (liveGroupTabs.length > 0) {
-                const currentPhysicalIndex = liveGroupTabs[0].index;
-                const groupEnd = currentPhysicalIndex + liveGroupTabs.length;
-                // Only physically rearrange the group if it is outside of its expected slot.
-                // Using a range check prevents cascading moves when groups are already
-                // adjacent but offset by 1 due to Chrome's internal tab reflow.
-                const isInCorrectSlot = (currentPhysicalIndex >= nextExpectedIndex && 
-                                         currentPhysicalIndex <= nextExpectedIndex + liveGroupTabs.length);
-                if (!isInCorrectSlot) {
-                    diagnosticApiCalls++;
-                    try {
-                        await chrome.tabGroups.move(targetGroupId, { index: nextExpectedIndex });
-                    } catch(e) { /* ignore moving edge case errors */ }
-                }
+            // Only force Chromium to slide the DOM around if the mathematical sequence fails validation!
+            if (!isPerfectlyOrdered) {
+               diagnosticApiCalls++;
+               try {
+                   await chrome.tabGroups.move(targetGroupId, { index: nextExpectedIndex });
+               } catch(e) {}
             }
+            nextExpectedIndex += chunkIds.length;
             
             try {
                 const currentGroupInfo = await chrome.tabGroups.get(targetGroupId);
@@ -210,11 +206,10 @@ async function applyHeatmapVisualsToWindow(win, windowTabs, chunks, isHotOnLeft)
                     });
                 }
             } catch (e) {
-                // Handle case where group was destroyed explicitly by the user mid-iteration
             }
         }
       } catch(e) {
-        console.error(`Error creating/updating group for color ${groupColor}:`, e);
+        console.error(`Error processing color ${groupColor}:`, e);
       }
     }
     
