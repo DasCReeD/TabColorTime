@@ -52,10 +52,14 @@ async function scheduleUpdate(tabId) {
   const result = await chrome.storage.local.get(['tabOrder']);
   let currentOrder = result.tabOrder || [];
 
-  // If this tab is already the most recent, skip the write entirely.
-  // This prevents unnecessary storage churn and downstream UI recalculations
-  // when the user clicks within the same group repeatedly.
-  if (currentOrder.length > 0 && currentOrder[currentOrder.length - 1] === tabId) {
+  // Short-circuit: if the user clicks a tab that is ALREADY within the "HOT" chunk
+  // (the last 10 elements of the master array), we do NOT need to reshuffle tabOrder.
+  // This prevents the mathematical cache system from even needing to spin up, neutralizing 
+  // any visual extension bouncing outright in practice.
+  const isAlreadyHot = currentOrder.slice(-10).includes(tabId);
+  if (isAlreadyHot) {
+    // We only update tabOrder to strictly track the active tab precisely if it crosses a boundary.
+    // If it stays within the hot bucket, its relative internal sorting doesn't matter visually!
     return;
   }
 
